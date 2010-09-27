@@ -1,0 +1,8 @@
+*.py[co]
+*.mo
+*.db
+*.swp
+*.pid
+*.orig
+*~
+build/
