@@ -691,14 +691,16 @@ class Api(object):
 
     #{{{ miniblog
 
-    def get_miniblog(self, term=None):
-        """
-        Get all miniblog:
-            >>> get_miniblog()
+    def get_user_miniblog(self, userID, term=None):
+        path = '/people/%s/miniblog' % userID
+        params = {'start-index': self._start, 'max-results': self._max}
+        if term:
+            params.update({'type':term})
+        if hasattr(self, '_oauth'):
+            return self._get(path)
+        return self._get_public(path)
 
-        Get only saying:
-            >>> get_miniblog(term='saying')
-        """
+    def get_miniblog(self, term=None):
         path = '/people/%40me/miniblog'
         params = {'start-index': self._start, 'max-results': self._max}
         if term:
@@ -706,14 +708,16 @@ class Api(object):
             params.update({'type':term})
         return self._get(path, params)
 
-    def get_contacts_miniblog(self, term=None):
-        """
-        Get all contacts miniblog:
-            >>> get_contacts_miniblog()
+    def get_user_contacts_miniblog(self,userID, term=None):
+        path = '/people/%s/miniblog/contacts' % userID
+        params = {'start-index': self._start, 'max-results': self._max}
+        if term:
+            params.update({'type':term})
+        if hasattr(self, '_oauth'):
+            return self._get(path)
+        return self._get_public(path)
 
-        Get only contacts saying:
-            >>> get_contacts_miniblog(term='saying')
-        """
+    def get_contacts_miniblog(self, term=None):
         path = '/people/%40me/miniblog/contacts'
         params = {'start-index': self._start, 'max-results': self._max}
         if term:
