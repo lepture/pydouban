@@ -91,6 +91,13 @@ def _dict2header(dic):
     return {'Authorization': auth_header}
 
 class Auth(object):
+    """
+    Easy OAuth for Douban.
+    >>> auth = pydouban.Auth(key, secret)
+    >>> print auth.login()
+
+    more information on http://www.douban.com/service/apidoc/auth
+    """
     _token = ''
     _token_secret = ''
     def __init__(self, key='', secret=''):
@@ -170,6 +177,9 @@ class Auth(object):
 
 class Api(object):
     """
+    Douban API Service
+    Documentation on http://i.shiao.org/a/pydouban
+
     more information on http://www.douban.com/service/apidoc/reference/
     """
     def __init__(self, alt='json', start_index=1, max_results=10, skip_read=True):
@@ -280,8 +290,7 @@ class Api(object):
         return res.read()
 
     def search_people(self, q):
-        try: q = q.encode('utf-8')
-        except UnicodeDecodeError: pass
+        q = _escape(q)
         dic = {'q':q, 'alt':self._alt,'start-index':self._start,'max-results':self._max}
         path = '/people?' + _dict2qs(dic)
         if hasattr(self, '_key'):
@@ -292,8 +301,7 @@ class Api(object):
         return res.read()
 
     def _sq(self, q, tag=None, var='movie'):
-        try: q = q.encode('utf-8')
-        except UnicodeDecodeError: pass
+        q = _escape(q)
         path = '/%s/subjects' % var
         dic = {'q':q, 'alt':self._alt,'start':self._start,'max':self._max}
         s = '?q=%(q)s&alt=%(alt)s&start-index=%(start)s&max-results=%(max)s'\
@@ -344,6 +352,26 @@ class Api(object):
             return self._get(path)
         return self._get_public(path)
 
+    def get_book_tags(self, subjectID):
+        path = '/book/subject/%s/tags' % subjectID
+        params = {'start-index': self._start, 'max-results': self._max}
+        return self._get_public(path, params)
+    def get_movie_tags(self, subjectID):
+        path = '/movie/subject/%s/tags' % subjectID
+        params = {'start-index': self._start, 'max-results': self._max}
+        return self._get_public(path, params)
+    def get_music_tags(self, subjectID):
+        path = '/music/subject/%s/tags' % subjectID
+        params = {'start-index': self._start, 'max-results': self._max}
+        return self._get_public(path, params)
+    
+    def get_user_tags(self, userID, cat='book'):
+        path = '/people/%s/tags' % userID
+        if cat not in ('book','music','movie'):
+            cat = 'book'
+        params = {'cat': cat,'start-index': self._start, 'max-results': self._max}
+        return self._get_public(path, params)
+
     #}}}
     
     #{{{ user info
@@ -386,6 +414,10 @@ class Api(object):
         return self._get(path)
 
     def _collection_atom(self, sourceURL, status, rating, tags, comment, privacy):
+        if int(rating) > 5:
+            rating = 5
+        elif int(rating) < 0:
+            rating = 0
         if not isinstance(tags, list):
             raise TypeError
         if privacy not in ('public', 'private'):
@@ -438,6 +470,8 @@ class Api(object):
         params = {'start-index': self._start, 'max-results': self._max}
         return self._get(path, params)
 
+    # { no oauth needed
+
     def get_event(self, eventID):
         path = '/event/%s' % eventID
         if hasattr(self, '_oauth'):
@@ -455,7 +489,6 @@ class Api(object):
         if hasattr(self, '_oauth'):
             return self._get(path, params)
         return self._get_public(path, params)
-
     def get_user_events(self, userID):
         path = '/people/%s/events' % userID
         params = {'start-index': self._start, 'max-results': self._max}
@@ -486,22 +519,61 @@ class Api(object):
         if hasattr(self, '_oauth'):
             return self._get(path, params)
         return self._get_public(path, params)
-    def search_events(self, q, location='all'):
+    def search_events(self, q, term='all', location='all'):
         path = '/events'
-        try: q = q.encode('utf-8')
-        except UnicodeDecodeError: pass
-        params = {'q': q, 'location': location,
+        q = _escape(q)
+        params = {'q': q, 'location': location, 'type': term,
                   'start-index': self._start, 'max-results': self._max}
         return self._get_public(path, params)
+    # }
 
-    #TODO
-    def post_event(self):
-        pass
-    def update_event(self, eventID):
-        pass
-    def del_event(self, eventID):
+    def _event_atom(self, title, content, where, term, invite_only, can_invite):
+        if term not in 'commonweal,drama,exhibition,film,music,others,party,salon,sports,travel'.split(','):
+            term = 'all'
+        if invite_only not in ('yes', 'no'):
+            invite_only = 'no'
+        if can_invite not in ('yes', 'no'):
+            can_invite = 'yes'
+        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/" xmlns:gd="http://schemas.google.com/g/2005" xmlns:opensearch="http://a9.com/-/spec/opensearchrss/1.0/">'
+        atom += '<title>%s</title>' % _escape(title)
+        atom += '<category scheme="http://www.douban.com/2007#kind" term="http://www.douban.com/2007#event.%s"/>' % term
+        atom += '<content>%s</content>' % _escape(content)
+        atom += '<db:attribute name="invite_only">%s</db:attribute>' % invite_only
+        atom += '<db:attribute name="can_invite">%s</db:attribute>' % can_invite
+        atom += '<gd:where valueString="%s" /></entry>' % _escape(where)
+        return atom
+
+    def post_event(self, title, content, where, term='all', invite_only='no', can_invite='yes'):
+        path = '/events'
+        atom = _event_atom(title, content, where, term, invite_only, can_invite)
+        return self._post(path, atom)
+
+    def update_event(self,eventID, title, content, where, term='all', invite_only='no', can_invite='yes'):
         path = '/event/%s' % eventID
+        atom = _event_atom(title, content, where, term, invite_only, can_invite)
+        return self._post(path, atom)
+
+    def join_event(self, eventID):
+        path = '/event/%s/participants' % eventID
+        return self._post(path, None)
+
+    def wish_event(self, eventID):
+        path = '/event/%s/wishers' % eventID
+        return self._post(path, None)
+
+    def unjoin_event(self, eventID):
+        path = '/event/%s/participants' % eventID
         return self._del(path)
+
+    def unwish_event(self, eventID):
+        path = '/event/%s/wishers' % eventID
+        return self._del(path)
+
+    def del_event(self, eventID, content):
+        path = '/event/%s/delete' % eventID
+        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/">'
+        atom += '<content>%s</content></entry>' % _escape(content)
+        return self._post(path, atom) #TODO status code
 
     #}}}
 
@@ -552,6 +624,71 @@ class Api(object):
 
     #}}}
 
+    #{{{ review
+    # http://www.douban.com/service/apidoc/reference/review
+
+    def get_review(self, reviewID):
+        path = '/review/%s' % reviewID
+        if hasattr(self, '_oauth'):
+            return self._get(path)
+        return self._get_public(path)
+    def get_user_reviews(self, userID):
+        path = '/people/%s/reviews' % userID
+        params = {'start-index': self._start, 'max-results': self._max}
+        if hasattr(self, '_oauth'):
+            return self._get(path, params)
+        return self._get_public(path, params)
+    def _get_subject_reviews(self, path):
+        params = {'start-index': self._start, 'max-results': self._max}
+        if hasattr(self, '_oauth'):
+            return self._get(path, params)
+        return self._get_public(path, params)
+    def get_book_reviews_byid(self, subjectID):
+        path = '/book/subject/%s/reviews' % subjectID
+        return self._get_subject_reviews(path)
+    def get_book_reviews_byisbn(self, isbnID):
+        path = '/book/subject/isbn/%s/reviews' % isbnID
+        return self._get_subject_reviews(path)
+    def get_movie_reviews_byid(self, subjectID):
+        path = '/movie/subject/%s/reviews' % subjectID
+        return self._get_subject_reviews(path)
+    def get_movie_reviews_byimdb(self, imdbID):
+        path = '/book/subject/imdb/%s/reviews' % imdbID
+        return self._get_subject_reviews(path)
+    def get_music_reviews_byid(self, subjectID):
+        path = '/music/subject/%s/reviews' % subjectID
+        return self._get_subject_reviews(path)
+
+    def post_review(self, sourceURL, title, rating, content):
+        path = '/reviews'
+        if int(rating) > 5:
+            rating = 5
+        elif int(rating) < 0:
+            rating = 0
+        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/">'
+        atom += '<db:subject xmlns:db="http://www.douban.com/xmlns/"><id>%s</id></db:subject>' % sourceURL
+        atom += '<content>%s</content>' % _escape(content)
+        atom += '<gd:rating xmlns:gd="http://schemas.google.com/g/2005" value="%s" />' % rating
+        atom += '<title>%s</title></entry>' % _escape(title)
+        return self._post(path, atom)
+    def update_review(self, reviewID, sourceURL, title, rating, content):
+        path = '/review/%s' % reviewID
+        if int(rating) > 5:
+            rating = 5
+        elif int(rating) < 0:
+            rating = 0
+        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/">'
+        atom += '<db:subject xmlns:db="http://www.douban.com/xmlns/"><id>%s</id></db:subject>' % sourceURL
+        atom += '<content>%s</content>' % _escape(content)
+        atom += '<gd:rating xmlns:gd="http://schemas.google.com/g/2005" value="%s" />' % rating
+        atom += '<title>%s</title></entry>' % _escape(title)
+        return self._put(path, atom)
+    def del_review(self, reviewID):
+        path = '/review/%s' % reviewID
+        return self._del(path)
+
+    #}}}
+
     #{{{ miniblog
 
     def get_miniblog(self, term=None):
@@ -591,10 +728,6 @@ class Api(object):
 
     def post_miniblog(self, msg):
         path = '/miniblog/saying'
-        try:
-            content = msg.encode('utf-8')
-        except UnicodeDecodeError:
-            content = msg
         atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/"><content>'
         atom += _escape(content)
         atom += '</content></entry>'
@@ -602,10 +735,6 @@ class Api(object):
 
     def post_miniblog_reply(self, miniblogID, msg):
         path = '/miniblog/%s/comments' % miniblogID
-        try:
-            content = msg.encode('utf-8')
-        except UnicodeDecodeError:
-            content = msg
         atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/"><content>'
         atom += _escape(content)
         atom += '</content></entry>'
@@ -617,12 +746,50 @@ class Api(object):
 
     #}}}
 
+    #{{{ recommendation
+    # http://www.douban.com/service/apidoc/reference/recommendation
+    
+    def get_recommendation(self, recommendationID):
+        path = '/recommendation/%s' % recommendationID
+        return self._get_public(path)
+    def get_user_recommendations(self, userID):
+        path = '/people/%s/recommendations' % userID
+        params = {'start-index': self._start, 'max-results': self._max}
+        return self._get_public(path, params)
+    def get_recommendation_replies(self, recommendationID):
+        path = '/recommendation/%s/comments' % recommendationID
+        params = {'start-index': self._start, 'max-results': self._max}
+        return self._get_public(path, params)
+
+    def post_recommendation(self, sourceURL, title, content, rel='related'):
+        path = '/recommendations'
+        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/" xmlns:gd="http://schemas.google.com/g/2005" xmlns:opensearch="http://a9.com/-/spec/opensearchrss/1.0/">'
+        atom += '<title>%s</title>' % _escape(title)
+        atom += '<db:attribute name="comment">%s</db:attribute>' % _escape(content)
+        atom += '<link href="%s" rel="%s" /></entry>' % (sourceURL, rel)
+        return self._post(path, atom)
+
+    def del_recommendation(self, recommendationID):
+        path = '/recommendation/%s' % recommendationID
+        return self._del(path)
+
+    def reply_recommendation(self, recommendationID, content):
+        path = '/recommendation/%s/comments' % recommendationID
+        atom = '<?xml version="1.0" encoding="UTF-8"?><entry><content>%s</content></entry>' % _escape(content)
+        return self._post(path, atom)
+
+    def del_recommendation_reply(self, recommendationID, replyID):
+        path = '/recommendation/%s/comment/%s' % (recommendationID, replyID)
+        return self._del(path)
+
+    #}}}
+
     #{{{ douban mail
     # http://www.douban.com/service/apidoc/reference/doumail
 
     def get_mail(self, doumailID):
         path = '/doumail/%s' % doumailID
-        return self._get(doumail)
+        return self._get(path)
 
     def get_inbox_mails(self):
         path = '/doumail/inbox'
