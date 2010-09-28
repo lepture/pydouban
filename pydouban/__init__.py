@@ -726,14 +726,14 @@ class Api(object):
         params = {'start-index': self._start, 'max-results': self._max}
         return self._get(path, params)
 
-    def post_miniblog(self, msg):
+    def post_miniblog(self, content):
         path = '/miniblog/saying'
         atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/"><content>'
         atom += _escape(content)
         atom += '</content></entry>'
         return self._post(path, atom)
 
-    def post_miniblog_reply(self, miniblogID, msg):
+    def post_miniblog_reply(self, miniblogID, content):
         path = '/miniblog/%s/comments' % miniblogID
         atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/"><content>'
         atom += _escape(content)
