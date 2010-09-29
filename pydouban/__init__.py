@@ -16,8 +16,8 @@ Basic Usage:
 
     >>> api = pydouban.Api()
     >>> print api.search_people('ahbei')
-    >>> api.set_qs_token(token_qs)
-    >>> print api.get_me()
+    >>> api.set_qs_oauth(key, secret, qs)
+    >>> print api.get_profile()
 """
 '''
 The BSD License
@@ -376,7 +376,7 @@ class Api(object):
     
     #{{{ user info
 
-    def get_me(self):
+    def get_profile(self):
         """ get authed user's information"""
         path = '/people/%40me'
         return self._get(path)
