@@ -64,31 +64,19 @@ from random import getrandbits
 from time import time
 from cgi import escape
 
+try:
+    import json # Python >= 2.6
+except ImportError:
+    try:
+        import simplejson as json # Python < 2.6
+    except ImportError:
+        try:
+            from django.utils import simplejson as json
+        except ImportError:
+            raise ImportError
+
 AUTH_URL = 'http://www.douban.com/service/auth'
 API_URL = 'http://api.douban.com'
-
-def _escape(s):
-    try: s = s.encode('utf-8')
-    except UnicodeDecodeError: pass
-    return escape(s)
-
-def _quote(s):
-    return urllib.quote(str(s), '~')
-
-def _qs2dict(s):
-    dic = {} 
-    for param in s.split('&'):
-        (key, value) = param.split('=')
-        dic[key] = value
-    return dic
-
-def _dict2qs(dic):
-    return '&'.join(['%s=%s' % (key, _quote(value)) for key, value in dic.iteritems()]) 
-
-def _dict2header(dic):
-    s = ', '.join(['%s="%s"' % (k, _quote(v)) for k, v in dic.iteritems() if k.startswith('oauth_')]) 
-    auth_header = 'OAuth realm="", %s' % s
-    return {'Authorization': auth_header}
 
 class Auth(object):
     """
@@ -255,15 +243,21 @@ class Api(object):
             return True
         return res.read()
     
+    def _get_open(self, url):
+        res = urllib.urlopen(url)
+        if 200 != res.code:
+            raise Exception('Douban Get Error : ' + str(res.code))
+        if 'json' == self._alt:
+            return _FormateData.render(res.read())
+        return res.read()
+
     def _get(self, path, params={}):
         assert hasattr(self, '_oauth'), "need be authed."
         res_url = API_URL + path
         params.update({'alt': self._alt})
         dic = self._oauth.get_oauth_params(res_url, params, 'GET')
-        res = urllib.urlopen(url=res_url + '?' + _dict2qs(dic))
-        if 200 != res.code:
-            raise Exception('Douban Get Error : ' + str(res.code))
-        return res.read()
+        url=res_url + '?' + _dict2qs(dic)
+        return self._get_open(url)
 
     def _get_public(self, path, params={}):
         path += '?alt=' + self._alt
@@ -271,10 +265,8 @@ class Api(object):
             path += '&' + _dict2qs(params)
         if hasattr(self, '_key'):
             path += '&apikey=' + self._key
-        res = urllib.urlopen(url=API_URL+path)
-        if 200 != res.code:
-            raise Exception('Get Public Resouce Error : ' + str(res.code))
-        return res.read()
+        url=API_URL+path
+        return self._get_open(url)
 
     #}}}
     
@@ -284,10 +276,7 @@ class Api(object):
         path = '/people/%s?alt=%s' % (userID, self._alt)
         if hasattr(self, '_key'):
             path = '/people/%s?alt=%s&apikey=%s' % (userID, self._alt, self._key)
-        res = urllib.urlopen(url=API_URL+path)
-        if 200 != res.code:
-            raise Exception('Get People Error : ' + str(res.code))
-        return res.read()
+        return self._get_open(API_URL+path)
 
     def search_people(self, q):
         q = _escape(q)
@@ -295,10 +284,7 @@ class Api(object):
         path = '/people?' + _dict2qs(dic)
         if hasattr(self, '_key'):
             path += '&apikey=' + self._key
-        res = urllib.urlopen(url=API_URL+path)
-        if 200 != res.code:
-            raise Exception('Search People Error : ' + str(res.code))
-        return res.read()
+        return self._get_open(url=API_URL+path)
 
     def _sq(self, q, tag=None, var='movie'):
         q = _escape(q)
@@ -310,11 +296,7 @@ class Api(object):
             s += '&tag=' + tag
         if hasattr(self, '_key'):
             s += '&apikey=' + self._key
-        url = API_URL + path + s
-        res = urllib.urlopen(url)
-        if 200 != res.code:
-            raise Exception('Search Resource Error : ' + str(res.code))
-        return res.read()
+        return self._get_open(API_URL + path + s)
     def search_movie(self, q, tag=None):
         return self._sq(q, tag, var='movie')
     def search_book(self, q, tag=None):
@@ -422,7 +404,7 @@ class Api(object):
             raise TypeError
         if privacy not in ('public', 'private'):
             privacy = 'public'
-        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/">'
+        atom = _atom_db_header
         atom += '<db:status>' + status + '</db:status>'
         for tag in tags:
             atom += '<db:tag name="%s" />' % _escape(tag)
@@ -534,7 +516,7 @@ class Api(object):
             invite_only = 'no'
         if can_invite not in ('yes', 'no'):
             can_invite = 'yes'
-        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/" xmlns:gd="http://schemas.google.com/g/2005" xmlns:opensearch="http://a9.com/-/spec/opensearchrss/1.0/">'
+        atom = _atom_sq_header
         atom += '<title>%s</title>' % _escape(title)
         atom += '<category scheme="http://www.douban.com/2007#kind" term="http://www.douban.com/2007#event.%s"/>' % term
         atom += '<content>%s</content>' % _escape(content)
@@ -571,7 +553,7 @@ class Api(object):
 
     def del_event(self, eventID, content):
         path = '/event/%s/delete' % eventID
-        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/">'
+        atom = _atom_db_header
         atom += '<content>%s</content></entry>' % _escape(content)
         return self._post(path, atom) #TODO status code
 
@@ -595,17 +577,12 @@ class Api(object):
             can_reply = 'no'
         if 'private' == privacy:
             can_reply = 'no'
-        title = _escape(title)
-        content = _escape(content)
-        dic = {'title': title, 'content': content,'privacy':privacy, 'can_reply': can_reply}
-        atom = '''
-        <?xml version="1.0" encoding="UTF-8"?>
-        <entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/">
-        <title>%(title)s</title>
-        <content>%(content)s</content>
-        <db:attribute name="privacy">%(privacy)s</db:attribute>
-        <db:attribute name="can_reply">%(can_reply)s</db:attribute>
-        </entry>''' % dic
+        atom = _atom_db_header
+        atom += '<title>%s</title>' % _escape(title)
+        atom += '<content>%s</content>' % _escape(content)
+        atom += '<db:attribute name="privacy">%s</db:attribute>' % privacy
+        atom += '<db:attribute name="can_reply">%s</db:attribute>' % can_reply
+        atom += '</entry>'
         return atom
 
     def post_note(self, title, content, privacy='public', can_reply='yes'): 
@@ -665,7 +642,7 @@ class Api(object):
             rating = 5
         elif int(rating) < 0:
             rating = 0
-        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/">'
+        atom = _atom_db_header
         atom += '<db:subject xmlns:db="http://www.douban.com/xmlns/"><id>%s</id></db:subject>' % sourceURL
         atom += '<content>%s</content>' % _escape(content)
         atom += '<gd:rating xmlns:gd="http://schemas.google.com/g/2005" value="%s" />' % rating
@@ -677,7 +654,7 @@ class Api(object):
             rating = 5
         elif int(rating) < 0:
             rating = 0
-        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/">'
+        atom = _atom_db_header
         atom += '<db:subject xmlns:db="http://www.douban.com/xmlns/"><id>%s</id></db:subject>' % sourceURL
         atom += '<content>%s</content>' % _escape(content)
         atom += '<gd:rating xmlns:gd="http://schemas.google.com/g/2005" value="%s" />' % rating
@@ -732,16 +709,14 @@ class Api(object):
 
     def post_miniblog(self, content):
         path = '/miniblog/saying'
-        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/"><content>'
-        atom += _escape(content)
-        atom += '</content></entry>'
+        atom = _atom_db_header
+        atom += '<content>%s</content></entry>' % _escape(content)
         return self._post(path, atom)
 
     def post_miniblog_reply(self, miniblogID, content):
         path = '/miniblog/%s/comments' % miniblogID
-        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/"><content>'
-        atom += _escape(content)
-        atom += '</content></entry>'
+        atom = _atom_db_header
+        atom += '<content>%s</content></entry>' % _escape(content)
         return self._post(path, atom)
 
     def del_miniblog(self, miniblogID):
@@ -767,7 +742,7 @@ class Api(object):
 
     def post_recommendation(self, sourceURL, title, content, rel='related'):
         path = '/recommendations'
-        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/" xmlns:gd="http://schemas.google.com/g/2005" xmlns:opensearch="http://a9.com/-/spec/opensearchrss/1.0/">'
+        atom = _atom_sq_header
         atom += '<title>%s</title>' % _escape(title)
         atom += '<db:attribute name="comment">%s</db:attribute>' % _escape(content)
         atom += '<link href="%s" rel="%s" /></entry>' % (sourceURL, rel)
@@ -811,7 +786,7 @@ class Api(object):
         return self._get(path, params)
 
     def post_mail(self, receiverID, title, content):
-        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/" xmlns:gd="http://schemas.google.com/g/2005" xmlns:opensearch="http://a9.com/-/spec/opensearchrss/1.0/">'
+        atom = _atom_sq_header
         atom += '<db:entity name="receiver"><uri>http://api.douban.com/people/%s</uri></db:entity>' % _escape(receiverID)
         atom += '<content>%s</content>' % _escape(content)
         atom += '<title>%s</title>' % _escape(title)
@@ -824,5 +799,85 @@ class Api(object):
 
     def mark_mail_read(self, doumailID):
         path = '/doumail/%s' % doumailID
-        atom = '<?xml version="1.0" encoding="UTF-8"?><entry xmlns="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/" xmlns:gd="http://schemas.google.com/g/2005" xmlns:opensearch="http://a9.com/-/spec/opensearchrss/1.0/"><db:attribute name="unread">false</db:attribute></entry>'
+        atom = _atom_sq_header
+        atom += '<db:attribute name="unread">false</db:attribute></entry>'
         return self._put(path, atom)
+
+def _escape(s):
+    try: s = s.encode('utf-8')
+    except UnicodeDecodeError: pass
+    return escape(s)
+
+def _quote(s):
+    return urllib.quote(str(s), '~')
+
+def _qs2dict(s):
+    dic = {} 
+    for param in s.split('&'):
+        (key, value) = param.split('=')
+        dic[key] = value
+    return dic
+
+def _dict2qs(dic):
+    return '&'.join(['%s=%s' % (key, _quote(value)) for key, value in dic.iteritems()]) 
+
+def _dict2header(dic):
+    s = ', '.join(['%s="%s"' % (k, _quote(v)) for k, v in dic.iteritems() if k.startswith('oauth_')]) 
+    auth_header = 'OAuth realm="", %s' % s
+    return {'Authorization': auth_header}
+
+_atom_db_header = '''
+<?xml version="1.0" encoding="UTF-8"?><entry xmlns:ns0="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/">
+'''
+_atom_sq_header = '''
+<?xml version="1.0" encoding="UTF-8"?><entry xmlns="http://www.w3.org/2005/Atom" xmlns:db="http://www.douban.com/xmlns/" xmlns:gd="http://schemas.google.com/g/2005" xmlns:opensearch="http://a9.com/-/spec/opensearchrss/1.0/">
+'''
+class _FormateData(dict):
+    """
+    Copy from web.utils.Stroage
+    """
+    @classmethod
+    def _json_dic(cls, dic):
+        store = cls()
+        for key in dic.keys():
+            value = dic[key]
+            if isinstance(value, dict):
+                value = cls._json_dic(value)
+            elif isinstance(dic[key], list):
+                value = [cls._json_dic(subdic) for subdic in dic[key]]
+            if key.startswith('db:'):
+                key = key.replace('db:','')
+            elif key.startswith('gd:'):
+                key = key.replace('gd:','')
+            elif key.startswith('opensearch:'):
+                key = key.replace('opensearch:', '')
+            elif key.startswith('openSearch:'):
+                key = key.replace('openSearch:', '')
+            elif key.startswith('$'):
+                key = key.replace('$','')
+            elif key.startswith('@'):
+                key = key.replace('@','')
+            store[key] = value
+        return store
+
+    @classmethod
+    def render(cls, s):
+        dic = json.loads(s)
+        return cls._json_dic(dic)
+
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError, k:
+            raise AttributeError, k
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    def __delattr__(self, key):
+        try:
+            del self[key]
+        except KeyError, k:
+            raise AttributeError, k
+
+    def __repr__(self):
+        return dict.__repr__(self)
